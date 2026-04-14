@@ -1,6 +1,11 @@
 window.PwAnalyzer = (() => {
   function evaluatePassword(password, options = {}) {
-    const { siteName = "", reused = false, leaked = false } = options;
+    const {
+      siteName = "",
+      reused = false,
+      similarReused = false,
+      leaked = false,
+    } = options;
 
     let score = 0;
     const warnings = [];
@@ -16,7 +21,6 @@ window.PwAnalyzer = (() => {
       };
     }
 
-    // 길이 검사 (최적화 버전)
     if (password.length < 8) {
       warnings.push("길이가 너무 짧습니다.");
     } else if (password.length < 12) {
@@ -72,7 +76,12 @@ window.PwAnalyzer = (() => {
 
     if (reused) {
       score -= 20;
-      warnings.push("다른 사이트에서 재사용된 비밀번호 입니다");
+      warnings.push("다른 사이트에서 동일한 비밀번호를 재사용 중입니다.");
+    }
+
+    if (similarReused) {
+      score -= 10;
+      warnings.push("다른 사이트에서 유사한 비밀번호를 반복 사용 중입니다.");
     }
 
     if (leaked) {

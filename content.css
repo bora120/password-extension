@@ -98,3 +98,15 @@
   font-size: 12px;
   color: #6b7280;
 }
+
+#pw-helper-panel .pw-capslock-warning {
+  display: none;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 700;
+}

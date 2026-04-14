@@ -1,17 +1,116 @@
 (() => {
-  const { debounce, getSiteName, isPasswordInput } = window.PwUtils;
+  const {
+    debounce,
+    getSiteName,
+    getOriginKey,
+    isPasswordInput,
+    sha1Hex,
+    buildPasswordProfile,
+    areProfilesSimilar,
+  } = window.PwUtils;
   const { evaluatePassword } = window.PwAnalyzer;
 
   const PANEL_ID = "pw-helper-panel";
   const PANEL_WIDTH = 320;
   const PANEL_GAP = 12;
+  const STORAGE_KEY = "pwHelperPasswordHistory";
+  const MAX_HISTORY_SIZE = 50;
 
   let panel = null;
   let activeInput = null;
   let latestAsyncState = {
     reused: false,
+    similarReused: false,
     leaked: false,
+    reuseCount: 0,
+    similarReuseCount: 0,
   };
+  let capsLockOn = false;
+
+  function getStorageArea() {
+    if (
+      typeof chrome !== "undefined" &&
+      chrome.storage &&
+      chrome.storage.local
+    ) {
+      return chrome.storage.local;
+    }
+
+    return null;
+  }
+
+  async function getPasswordHistory() {
+    const storage = getStorageArea();
+    if (!storage) return [];
+
+    const stored = await storage.get(STORAGE_KEY);
+    return Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+  }
+
+  async function setPasswordHistory(history) {
+    const storage = getStorageArea();
+    if (!storage) return;
+
+    await storage.set({ [STORAGE_KEY]: history });
+  }
+
+  async function savePasswordRecord(password) {
+    if (!password) return;
+
+    const passwordHash = await sha1Hex(password);
+    const siteKey = getOriginKey();
+    const siteLabel = getSiteName() || siteKey;
+    const profile = buildPasswordProfile(password);
+
+    const history = await getPasswordHistory();
+    const withoutCurrentSite = history.filter(
+      (item) => item.siteKey !== siteKey,
+    );
+
+    withoutCurrentSite.unshift({
+      siteKey,
+      siteLabel,
+      passwordHash,
+      profile,
+      updatedAt: Date.now(),
+    });
+
+    await setPasswordHistory(withoutCurrentSite.slice(0, MAX_HISTORY_SIZE));
+  }
+
+  async function findReuseState(password) {
+    if (!password) {
+      return {
+        reused: false,
+        similarReused: false,
+        reuseCount: 0,
+        similarReuseCount: 0,
+      };
+    }
+
+    const passwordHash = await sha1Hex(password);
+    const currentProfile = buildPasswordProfile(password);
+    const currentSiteKey = getOriginKey();
+    const history = await getPasswordHistory();
+    const otherSites = history.filter(
+      (item) => item.siteKey !== currentSiteKey,
+    );
+
+    const exactMatches = otherSites.filter(
+      (item) => item.passwordHash === passwordHash,
+    );
+    const similarMatches = otherSites.filter((item) => {
+      if (item.passwordHash === passwordHash) return false;
+      return areProfilesSimilar(currentProfile, item.profile);
+    });
+
+    return {
+      reused: exactMatches.length > 0,
+      similarReused: similarMatches.length > 0,
+      reuseCount: exactMatches.length,
+      similarReuseCount: similarMatches.length,
+    };
+  }
 
   function createPanel() {
     const el = document.createElement("div");
@@ -40,6 +139,7 @@
       </ul>
 
       <div id="pw-extra-info" class="pw-extra-info"></div>
+      <div id="pw-capslock-warning" class="pw-capslock-warning"></div>
     `;
     document.body.appendChild(el);
     return el;
@@ -69,6 +169,7 @@
     const statusEl = panelEl.querySelector("#pw-status-value");
     const warningList = panelEl.querySelector("#pw-warning-list");
     const extraInfoEl = panelEl.querySelector("#pw-extra-info");
+    const capsLockEl = panelEl.querySelector("#pw-capslock-warning");
 
     scoreEl.textContent = result.score;
     statusEl.textContent = result.status;
@@ -84,7 +185,11 @@
     const extras = [];
 
     if (extra.reuseCount > 0) {
-      extras.push(`재사용 의심: ${extra.reuseCount}개 사이트`);
+      extras.push(`동일 비밀번호 재사용: ${extra.reuseCount}개 사이트`);
+    }
+
+    if (extra.similarReuseCount > 0) {
+      extras.push(`유사 비밀번호 반복: ${extra.similarReuseCount}개 사이트`);
     }
 
     if (extra.leaked === true) {
@@ -92,6 +197,14 @@
     }
 
     extraInfoEl.textContent = extras.join(" · ");
+
+    if (extra.capsLockOn) {
+      capsLockEl.textContent = "Caps Lock이 켜져 있습니다.";
+      capsLockEl.style.display = "block";
+    } else {
+      capsLockEl.textContent = "";
+      capsLockEl.style.display = "none";
+    }
   }
 
   function positionPanel(input) {
@@ -138,42 +251,36 @@
     const result = evaluatePassword(password, {
       siteName: getSiteName(),
       reused: latestAsyncState.reused,
+      similarReused: latestAsyncState.similarReused,
       leaked: latestAsyncState.leaked,
     });
 
     renderResult(result, {
       reuseCount: latestAsyncState.reuseCount || 0,
+      similarReuseCount: latestAsyncState.similarReuseCount || 0,
       leaked: latestAsyncState.leaked,
+      capsLockOn,
     });
   }
 
   async function runFutureChecks(password) {
     if (!password) {
-      latestAsyncState = { reused: false, leaked: false, reuseCount: 0 };
+      latestAsyncState = {
+        reused: false,
+        similarReused: false,
+        leaked: false,
+        reuseCount: 0,
+        similarReuseCount: 0,
+      };
       renderForPassword(password);
       return;
     }
 
-    /*
-      여기부터 나중에 추가할 자리
-
-      1) 재사용 분석
-         - password를 해시로 변환
-         - chrome.storage.local에서 기존 기록 비교
-         - latestAsyncState.reused / reuseCount 갱신
-
-      2) 유출 여부 검사
-         - SHA-1 해시 생성
-         - prefix 5글자 기준 외부 조회 or service worker 메시지 전달
-         - latestAsyncState.leaked 갱신
-
-      지금은 안정성 우선이라 기본값만 유지
-    */
+    const reuseState = await findReuseState(password);
 
     latestAsyncState = {
-      reused: false,
+      ...reuseState,
       leaked: false,
-      reuseCount: 0,
     };
 
     renderForPassword(password);
@@ -187,6 +294,7 @@
     activeInput = input;
     positionPanel(input);
     renderForPassword(input.value || "");
+    debouncedFutureChecks(input.value || "");
   }
 
   function handleFocusIn(event) {
@@ -196,6 +304,17 @@
     activateInput(target);
   }
 
+  function updateCapsLockState(event) {
+    const target = event.target;
+    if (!isPasswordInput(target)) return;
+
+    if (typeof event.getModifierState === "function") {
+      capsLockOn = event.getModifierState("CapsLock");
+      renderForPassword(target.value || "");
+      positionPanel(target);
+    }
+  }
+
   function handleInput(event) {
     const target = event.target;
     if (!isPasswordInput(target)) return;
@@ -203,8 +322,10 @@
     activeInput = target;
     latestAsyncState = {
       reused: false,
+      similarReused: false,
       leaked: false,
       reuseCount: 0,
+      similarReuseCount: 0,
     };
 
     renderForPassword(target.value || "");
@@ -212,17 +333,42 @@
     debouncedFutureChecks(target.value || "");
   }
 
+  function maybePersistPassword(target) {
+    if (!isPasswordInput(target)) return;
+
+    const password = target.value || "";
+    if (password.length < 8) return;
+
+    savePasswordRecord(password).catch(() => {});
+  }
+
   function handleFocusOut(event) {
     const target = event.target;
-    if (!target || target.tagName !== "INPUT" || target.type !== "password")
+    if (!target || target.tagName !== "INPUT" || target.type !== "password") {
       return;
+    }
+
+    maybePersistPassword(target);
 
     setTimeout(() => {
       if (!isPasswordInput(document.activeElement)) {
         hidePanel();
         activeInput = null;
+        capsLockOn = false;
       }
     }, 80);
+  }
+
+  function handleSubmit(event) {
+    const form = event.target;
+    if (!form || typeof form.querySelectorAll !== "function") return;
+
+    const passwordInputs = Array.from(
+      form.querySelectorAll('input[type="password"]'),
+    );
+    passwordInputs.forEach((input) => {
+      maybePersistPassword(input);
+    });
   }
 
   function handleViewportChange() {
@@ -237,6 +383,9 @@
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("input", handleInput, true);
     document.addEventListener("focusout", handleFocusOut, true);
+    document.addEventListener("keydown", updateCapsLockState, true);
+    document.addEventListener("keyup", updateCapsLockState, true);
+    document.addEventListener("submit", handleSubmit, true);
 
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
