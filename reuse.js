@@ -62,7 +62,7 @@ function buildReuseMessages(reuseResult) {
 
   if (reuseResult.isLongUsed) {
     warnings.push(
-      `이 사이트에서 ${reuseResult.daysOnSite}일째 동일한 비밀번호를 사용 중입니다.`
+      `이 사이트에서 ${reuseResult.daysOnSite}일째 동일한 비밀번호를 사용 중입니다.`,
     )
     details.push('보안을 위해 주기적인 비밀번호 변경을 권장합니다.')
   }

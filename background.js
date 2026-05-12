@@ -1,7 +1,6 @@
 /**
  * background.js
- * Service Worker - Supabase 통신을 담당합니다.
- * content.js에서 오는 메시지를 받아 Supabase DB와 통신합니다.
+ * Service Worker - Supabase 통신 및 로그인 성공 감지 저장 로직
  */
 
 import { createClient } from './supabase-bundle.js'
@@ -11,9 +10,11 @@ const SUPABASE_ANON_KEY = 'sb_publishable_wWDN3L3XOSWAwZiN_RouBQ_jgKs-khP'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+// [추가] 로그인 성공 판단을 위한 임시 저장 변수
+let pendingLogin = null
+
 // ─── 현재 로그인된 유저 ID 가져오기 ────────────────────────────────────────────
 async function getUserId() {
-  // chrome.storage.local에 저장된 세션에서 user_id 가져오기
   return new Promise((resolve) => {
     chrome.storage.local.get(['session'], (result) => {
       resolve(result.session?.user?.id || null)
@@ -26,30 +27,21 @@ async function recordHash(hash, domain) {
   const userId = await getUserId()
   if (!userId) return { error: '로그인 필요' }
 
-  const now = new Date().toISOString()
-
-  // 이미 있으면 last_seen만 업데이트, 없으면 insert
-  const { data: existing } = await supabase
-    .from('password_analytics')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('password_hash', hash)
-    .eq('domain', domain)
-    .single()
-
-  if (existing) {
-    await supabase
-      .from('password_analytics')
-      .update({ last_seen: now })
-      .eq('id', existing.id)
-  } else {
-    await supabase.from('password_analytics').insert({
+  const { error } = await supabase.from('password_analytics').upsert(
+    {
       user_id: userId,
       password_hash: hash,
       domain: domain,
-      first_seen: now,
-      last_seen: now,
-    })
+      last_seen: new Date().toISOString(),
+    },
+    {
+      onConflict: 'user_id, password_hash, domain',
+    },
+  )
+
+  if (error) {
+    console.error('[PwGuard] Supabase upsert 오류:', error.message)
+    return { error: error.message }
   }
 
   return { success: true }
@@ -58,7 +50,8 @@ async function recordHash(hash, domain) {
 // ─── 재사용 체크 ───────────────────────────────────────────────────────────────
 async function checkReuse(hash, currentDomain) {
   const userId = await getUserId()
-  if (!userId) return { isReused: false, otherSites: [], reuseCount: 0, daysSinceFirst: 0 }
+  if (!userId)
+    return { isReused: false, otherSites: [], reuseCount: 0, daysSinceFirst: 0 }
 
   const { data, error } = await supabase
     .from('password_analytics')
@@ -76,7 +69,9 @@ async function checkReuse(hash, currentDomain) {
 
   const allFirstSeen = data.map((s) => new Date(s.first_seen).getTime())
   const earliest = Math.min(...allFirstSeen)
-  const daysSinceFirst = Math.floor((Date.now() - earliest) / (1000 * 60 * 60 * 24))
+  const daysSinceFirst = Math.floor(
+    (Date.now() - earliest) / (1000 * 60 * 60 * 24),
+  )
 
   return {
     isReused: otherSites.length > 0,
@@ -102,7 +97,7 @@ async function getDaysUsedOnSite(hash, currentDomain) {
   if (error || !data) return 0
 
   return Math.floor(
-    (Date.now() - new Date(data.first_seen).getTime()) / (1000 * 60 * 60 * 24)
+    (Date.now() - new Date(data.first_seen).getTime()) / (1000 * 60 * 60 * 24),
   )
 }
 
@@ -110,9 +105,20 @@ async function getDaysUsedOnSite(hash, currentDomain) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { action, payload } = message
 
+  // [수정] 즉시 기록 대신 '시도' 정보를 보관
+  if (action === 'attemptLogin') {
+    pendingLogin = {
+      hash: payload.hash,
+      domain: payload.domain,
+      tabId: sender.tab.id,
+    }
+    sendResponse({ status: 'pending' })
+    return true
+  }
+
   if (action === 'recordHash') {
     recordHash(payload.hash, payload.domain).then(sendResponse)
-    return true // 비동기 응답
+    return true
   }
 
   if (action === 'checkReuse') {
@@ -130,5 +136,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ session: result.session || null })
     })
     return true
+  }
+})
+
+// [추가] 페이지 내비게이션 완료 시 로그인 성공으로 간주하여 저장
+chrome.webNavigation.onCompleted.addListener((details) => {
+  // 메인 프레임의 이동이고, 보관된 로그인 시도 정보가 현재 탭과 일치할 때
+  if (
+    details.frameId === 0 &&
+    pendingLogin &&
+    details.tabId === pendingLogin.tabId
+  ) {
+    console.log('[PwGuard] 로그인 성공 감지: DB에 기록을 수행합니다.')
+    recordHash(pendingLogin.hash, pendingLogin.domain)
+    pendingLogin = null // 기록 후 초기화
   }
 })

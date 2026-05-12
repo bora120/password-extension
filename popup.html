@@ -12,7 +12,11 @@
         font-size: 14px;
         color: #222;
       }
-      h2 { margin: 0 0 12px; font-size: 16px; color: #333; }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        color: #333;
+      }
       input {
         width: 100%;
         padding: 8px;
@@ -31,12 +35,32 @@
         font-size: 14px;
         cursor: pointer;
       }
-      #login-btn { background: #4f8ef7; color: #fff; }
-      #signup-btn { background: #eee; color: #333; }
-      #logout-btn { background: #f55; color: #fff; }
-      #success-section { display: none; }
-      #user-email { font-weight: bold; color: #4f8ef7; margin-bottom: 12px; }
-      #status-msg { font-size: 12px; color: #888; margin-top: 4px; min-height: 16px; }
+      #login-btn {
+        background: #4f8ef7;
+        color: #fff;
+      }
+      #signup-btn {
+        background: #eee;
+        color: #333;
+      }
+      #logout-btn {
+        background: #f55;
+        color: #fff;
+      }
+      #success-section {
+        display: none;
+      }
+      #user-email {
+        font-weight: bold;
+        color: #4f8ef7;
+        margin-bottom: 12px;
+      }
+      #status-msg {
+        font-size: 12px;
+        color: #888;
+        margin-top: 4px;
+        min-height: 16px;
+      }
     </style>
   </head>
   <body>
@@ -47,12 +71,17 @@
       <input type="password" id="password" placeholder="비밀번호" />
       <button id="login-btn">로그인</button>
       <button id="signup-btn">회원가입</button>
+      <button id="resend-btn" style="display:none; background:#f90; color:#fff;">인증 메일 재전송</button>
+      <p style="font-size:11px; color:#999; margin:4px 0 0;">※ 회원가입 후 이메일 인증이 완료되어야 로그인할 수 있습니다.</p>
       <div id="status-msg"></div>
     </div>
 
     <div id="success-section">
       <p id="user-email"></p>
-      <p style="color:#555; font-size:13px;">로그인 상태입니다.<br>비밀번호 입력창에서 보안 분석이 자동으로 실행됩니다.</p>
+      <p style="color: #555; font-size: 13px">
+        로그인 상태입니다.<br />비밀번호 입력창에서 보안 분석이 자동으로
+        실행됩니다.
+      </p>
       <button id="logout-btn">로그아웃</button>
     </div>
 
